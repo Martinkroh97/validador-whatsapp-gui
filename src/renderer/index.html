@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Validador WhatsApp</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-left">
+                <h1>📱 Validador WhatsApp</h1>
+                <span class="status-indicator" id="statusIndicator">●</span>
+                <span class="status-text" id="statusText">Inactivo</span>
+            </div>
+            <div class="header-right">
+                <button class="btn btn-secondary" id="refreshBtn">🔄 Recargar</button>
+                <button class="btn btn-secondary" id="settingsBtn">⚙️ Configuración</button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Pantalla de Credenciales Faltantes -->
+            <section class="screen hidden" id="credentialsScreen">
+                <div class="credentials-missing-container">
+                    <div class="credentials-icon">
+                        <svg width="80" height="80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"></path>
+                            <line x1="12" y1="9" x2="12" y2="13"></line>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                    </div>
+                    <h2>Configuración Requerida</h2>
+                    <p class="credentials-message">No se encontró el archivo <code>credenciales.json</code> necesario para conectar con Google Sheets.</p>
+                    
+                    <div class="credentials-instructions">
+                        <h3>Para comenzar a usar la aplicación:</h3>
+                        <ol>
+                            <li>Coloca el archivo <code>credenciales.json</code> en la carpeta de datos</li>
+                            <li>Si no tienes este archivo, contacta al administrador</li>
+                            <li>Reinicia la aplicación después de agregar el archivo</li>
+                        </ol>
+                    </div>
+                    
+                    <div class="credentials-path-info">
+                        <p>Ubicación de la carpeta de datos:</p>
+                        <div class="path-display" id="credentialsPath">
+                            <code>Cargando...</code>
+                        </div>
+                    </div>
+                    
+                    <div class="credentials-actions">
+                        <button class="btn btn-primary" id="openDataFolderBtn">
+                            📁 Abrir Carpeta de Datos
+                        </button>
+                        <button class="btn btn-secondary" id="checkAgainBtn">
+                            🔄 Verificar Nuevamente
+                        </button>
+                    </div>
+                    
+                    <div class="credentials-help">
+                        <details>
+                            <summary>¿Necesitas ayuda?</summary>
+                            <div class="help-content">
+                                <h4>¿Qué es credenciales.json?</h4>
+                                <p>Es un archivo de autenticación de Google que permite a la aplicación acceder a tus hojas de cálculo.</p>
+                                
+                                <h4>¿Cómo obtenerlo?</h4>
+                                <p>Este archivo debe ser proporcionado por el administrador del sistema o generado desde la consola de Google Cloud.</p>
+                                
+                                <h4>Estructura esperada:</h4>
+                                <pre>{
+  "type": "service_account",
+  "project_id": "tu-proyecto",
+  "private_key_id": "...",
+  "private_key": "...",
+  "client_email": "...",
+  ...
+}</pre>
+                            </div>
+                        </details>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pantalla de Selección de Cuenta -->
+            <section class="screen" id="configScreen">
+                <div class="screen-header">
+                    <h2>Seleccionar Cuenta</h2>
+                    <p>Elige la configuración que deseas validar</p>
+                </div>
+                
+                <div class="config-list" id="configList">
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>Cargando configuraciones...</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Pantalla de Validación -->
+            <section class="screen hidden" id="validationScreen">
+                <div class="validation-header">
+                    <div class="config-info">
+                        <h2 id="selectedConfigName">Configuración Seleccionada</h2>
+                        <p id="selectedConfigDescription">Descripción de la configuración</p>
+                    </div>
+                    <div class="validation-controls">
+                        <button class="btn btn-primary" id="startBtn">▶️ Iniciar</button>
+                        <button class="btn btn-warning hidden" id="pauseBtn">⏸️ Pausar</button>
+                        <button class="btn btn-danger hidden" id="stopBtn">🛑 Detener</button>
+                        <button class="btn btn-secondary" id="backBtn">← Volver</button>
+                    </div>
+                </div>
+
+                <!-- QR Code Area -->
+                <div class="qr-section hidden" id="qrSection">
+                    <div class="qr-container">
+                        <h3>Escanea el código QR con WhatsApp</h3>
+                        <div class="qr-code" id="qrCode">
+                            <div class="qr-placeholder">
+                                <div class="loading-spinner"></div>
+                                <p>Generando código QR...</p>
+                            </div>
+                        </div>
+                        <p class="qr-instructions">
+                            1. Abre WhatsApp en tu teléfono<br>
+                            2. Ve a Configuración > Dispositivos vinculados<br>
+                            3. Toca "Vincular un dispositivo"<br>
+                            4. Apunta tu teléfono a esta pantalla
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Progress Section -->
+                <div class="progress-section hidden" id="progressSection">
+                    <div class="progress-overview">
+                        <div class="progress-stats">
+                            <div class="stat-card">
+                                <div class="stat-number" id="totalNumbers">0</div>
+                                <div class="stat-label">Total</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-number" id="validNumbers">0</div>
+                                <div class="stat-label">Válidos</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-number" id="invalidNumbers">0</div>
+                                <div class="stat-label">Inválidos</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-number" id="duplicateNumbers">0</div>
+                                <div class="stat-label">Duplicados</div>
+                            </div>
+                        </div>
+                        
+                        <div class="progress-bar-container">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="progressFill"></div>
+                            </div>
+                            <div class="progress-text">
+                                <span id="progressPercentage">0%</span>
+                                <span id="progressCount">0 / 0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Current Processing -->
+                    <div class="current-processing" id="currentProcessing">
+                        <h3>Procesando actualmente:</h3>
+                        <div class="processing-item">
+                            <span class="processing-number" id="currentNumber">-</span>
+                            <span class="processing-status" id="currentStatus">En espera...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Log Section -->
+                <div class="log-section" id="logSection">
+                    <div class="log-header">
+                        <h3>Registro de Actividad</h3>
+                        <div class="log-controls">
+                            <button class="btn btn-small" id="clearLogBtn">Limpiar</button>
+                            <button class="btn btn-small" id="exportLogBtn">Exportar</button>
+                        </div>
+                    </div>
+                    <div class="log-container" id="logContainer">
+                        <div class="log-empty">
+                            <p>Los registros aparecerán aquí durante la validación</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Toast Notifications -->
+        <div class="toast-container" id="toastContainer"></div>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>
