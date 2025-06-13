@@ -47,6 +47,9 @@ class ValidadorCore extends EventEmitter {
     this.hojasParsed = [];
     this.hojaEmails = [];
 
+    // *** IMPORTANTE: Declarar hojaPrioridad aquí ***
+    this.hojaPrioridad = {};
+
     this.emit('log', {
       type: 'info',
       message: `Iniciando ValidadorCore - Modo: ${this.isPackaged ? 'Producción' : 'Desarrollo'}`,
@@ -219,6 +222,11 @@ Una vez instalado, reinicia la aplicación.
         type: 'info',
         message: `Usando credenciales: ${this.CREDENTIALS_PATH}`,
         timestamp: new Date().toISOString()
+      });
+
+      // *** CONSTRUIR PRIORIDAD DE HOJAS AQUÍ, ANTES DE WHATSAPP ***
+      this.CONFIG.principales.forEach((hoja, index) => {
+        this.hojaPrioridad[hoja.spreadsheetId] = index;
       });
 
       // Limpiar log de duplicados
@@ -422,11 +430,7 @@ Una vez instalado, reinicia la aplicación.
         timestamp: new Date().toISOString()
       });
       
-      // Construir prioridad de hojas
-      const hojaPrioridad = {};
-      this.CONFIG.principales.forEach((hoja, index) => {
-        hojaPrioridad[hoja.spreadsheetId] = index;
-      });
+      // *** Ya no construir hojaPrioridad aquí, ya está construido en start() ***
       
       // Fase 1: Escanear todas las hojas
       this.emit('log', {
@@ -472,7 +476,7 @@ Una vez instalado, reinicia la aplicación.
       
       for (const hoja of this.hojasParsed) {
         if (!this.isRunning || this.isPaused) return;
-        await this.marcarDuplicados(hoja, this.hojaEmails, hojaPrioridad);
+        await this.marcarDuplicados(hoja, this.hojaEmails, this.hojaPrioridad);
       }
       
       // Fase 3: Validar números de WhatsApp
@@ -534,24 +538,59 @@ Una vez instalado, reinicia la aplicación.
     const sheets = google.sheets({ version: 'v4', auth: authClient });
     
     try {
-      const res = await sheets.spreadsheets.values.get({
-        spreadsheetId: config.spreadsheetId,
-        range: `${config.sheetName}`,
-        majorDimension: "ROWS",
-      });
+      // *** Agregar retry para el error de visibility check ***
+      let retries = 3;
+      let lastError;
       
-      const rows = res.data.values;
-      if (!rows || rows.length < 2) return [];
+      while (retries > 0) {
+        try {
+          const res = await sheets.spreadsheets.values.get({
+            spreadsheetId: config.spreadsheetId,
+            range: `${config.sheetName}`,
+            majorDimension: "ROWS",
+          });
+          
+          const rows = res.data.values;
+          if (!rows || rows.length < 2) return [];
+          
+          const headers = rows[0];
+          const dataRows = rows.slice(1);
+          
+          return dataRows.map((row, i) => {
+            const obj = {};
+            headers.forEach((h, j) => obj[h.trim()] = row[j] !== undefined ? row[j] : '');
+            obj.__rowIndex = i + 2;
+            return obj;
+          });
+          
+        } catch (error) {
+          lastError = error;
+          retries--;
+          
+          const errorMsg = error.message || error.toString();
+          if (errorMsg.includes('Visibility check was unavailable') && retries > 0) {
+            this.emit('log', {
+              type: 'warning',
+              message: `Error temporal en hoja ${config.sheetName}, reintentando... (${retries} intentos restantes)`,
+              timestamp: new Date().toISOString()
+            });
+            
+            // Esperar antes del siguiente intento
+            await this.sleep(5000);
+            
+            // Renovar auth client para el siguiente intento
+            authClient = await this.getAuth();
+            sheets = google.sheets({ version: 'v4', auth: authClient });
+            continue;
+          }
+          
+          // Si no es un error de visibility o no quedan reintentos, lanzar el error
+          throw error;
+        }
+      }
       
-      const headers = rows[0];
-      const dataRows = rows.slice(1);
-      
-      return dataRows.map((row, i) => {
-        const obj = {};
-        headers.forEach((h, j) => obj[h.trim()] = row[j] !== undefined ? row[j] : '');
-        obj.__rowIndex = i + 2;
-        return obj;
-      });
+      // Si llegamos aquí, se agotaron los reintentos
+      throw lastError;
       
     } catch (error) {
       this.emit('log', {
