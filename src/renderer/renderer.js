@@ -403,14 +403,15 @@ function updateStatusIndicator(status, text) {
 function updateProgress(data) {
   appState.validationData = { ...appState.validationData, ...data };
   
-  const { total, completed, valid, invalid, duplicates } = appState.validationData;
-  
+  const { total, valid, invalid, duplicates } = appState.validationData;
+  const completed = (valid || 0) + (invalid || 0) + (duplicates || 0);
+
   // Actualizar números
   elements.totalNumbers.textContent = total || 0;
   elements.validNumbers.textContent = valid || 0;
   elements.invalidNumbers.textContent = invalid || 0;
   elements.duplicateNumbers.textContent = duplicates || 0;
-  
+
   // Actualizar barra de progreso
   if (total > 0) {
     const percentage = Math.round((completed / total) * 100);
@@ -418,12 +419,11 @@ function updateProgress(data) {
     elements.progressPercentage.textContent = `${percentage}%`;
     elements.progressCount.textContent = `${completed} / ${total}`;
   }
-  
+
   // Actualizar número actual
   if (data.currentNumber) {
     elements.currentNumber.textContent = data.currentNumber;
   }
-  
   if (data.currentStatus) {
     elements.currentStatus.textContent = data.currentStatus;
   }

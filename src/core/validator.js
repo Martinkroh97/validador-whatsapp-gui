@@ -461,28 +461,24 @@ Una vez instalado, reinicia la aplicación.
         message: 'Iniciando proceso de validación...',
         timestamp: new Date().toISOString()
       });
-      
-      // *** Ya no construir hojaPrioridad aquí, ya está construido en start() ***
-      
+
       // Fase 1: Escanear todas las hojas
       this.emit('log', {
         type: 'info',
         message: 'Fase 1: Escaneando hojas de cálculo...',
         timestamp: new Date().toISOString()
       });
-      
+
       for (const hoja of this.CONFIG.principales) {
         if (!this.isRunning || this.isPaused) return;
-        
         const data = await this.escanearHoja(hoja);
         this.hojasParsed.push({ ...hoja, data });
-        
+
         // Procesar emails para detección de duplicados
         for (const row of data) {
           const email = row['Email']?.trim().toLowerCase();
           const fecha = row['Fecha'] ? new Date(row['Fecha']) : null;
           if (!email) continue;
-          
           this.hojaEmails.push({
             spreadsheetId: hoja.spreadsheetId,
             sheetName: hoja.sheetName,
@@ -491,39 +487,38 @@ Una vez instalado, reinicia la aplicación.
             fecha,
           });
         }
-        
+
         this.emit('log', {
           type: 'success',
           message: `Hoja escaneada: ${hoja.sheetName} (${data.length} filas)`,
           timestamp: new Date().toISOString()
         });
       }
-      
+
       // Fase 2: Marcar duplicados
       this.emit('log', {
         type: 'info',
         message: 'Fase 2: Detectando y marcando duplicados...',
         timestamp: new Date().toISOString()
       });
-      
+
       for (const hoja of this.hojasParsed) {
         if (!this.isRunning || this.isPaused) return;
         await this.marcarDuplicados(hoja, this.hojaEmails, this.hojaPrioridad);
       }
-      
+
       // Fase 3: Validar números de WhatsApp
       this.emit('log', {
         type: 'info',
         message: 'Fase 3: Validando números de WhatsApp...',
         timestamp: new Date().toISOString()
       });
-      
+
       // Calcular total de números a validar
       let totalNumbers = 0;
       for (const hoja of this.hojasParsed) {
         const columnas = hoja.columnas || {};
         const validacionColName = columnas.validacion;
-        
         if (validacionColName) {
           const pendientes = hoja.data.filter(row => {
             const estado = row[validacionColName]?.trim().toLowerCase();
@@ -532,10 +527,9 @@ Una vez instalado, reinicia la aplicación.
           totalNumbers += pendientes.length;
         }
       }
-      
       this.validationData.total = totalNumbers;
       this.emit('progress', { ...this.validationData });
-      
+
       // Validar cada hoja
       for (const hoja of this.hojasParsed) {
         if (!this.isRunning || this.isPaused) return;
@@ -559,9 +553,14 @@ Una vez instalado, reinicia la aplicación.
       
       this.isRunning = false;
       
+      // *** Cierra el cliente automáticamente al finalizar ***
+      await this.stop();
+
     } catch (error) {
       this.emit('error', error);
       this.isRunning = false;
+      // *** También cierra el cliente si ocurre un error ***
+      await this.stop();
     }
   }
   
