@@ -5,6 +5,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Configuraciones
   getConfigs: () => ipcRenderer.invoke('get-configs'),
   
+  // Nueva función para guardar configuraciones
+  saveNewConfig: (fileName, configData) => ipcRenderer.invoke('save-new-config', fileName, configData),
+  
   // Credenciales
   checkCredentials: () => ipcRenderer.invoke('check-credentials'),
   openDataFolder: () => ipcRenderer.invoke('open-data-folder'),

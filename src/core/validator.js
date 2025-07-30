@@ -57,6 +57,38 @@ class ValidadorCore extends EventEmitter {
     });
   }
 
+  /**
+   * *** NUEVA FUNCIÓN: Normaliza nombres de leads eliminando caracteres problemáticos ***
+   */
+  normalizeLeadName(name) {
+    if (!name || typeof name !== 'string') {
+      return name; // Retornar el valor original si no es válido
+    }
+    
+    // Convertir a string y trim espacios
+    let normalized = name.toString().trim();
+    
+    // Eliminar comillas simples y dobles
+    normalized = normalized.replace(/['"]/g, '');
+    
+    // Eliminar caracteres especiales problemáticos para integraciones (especialmente Make)
+    normalized = normalized.replace(/[`´''""„"«»]/g, '');
+    
+    // Limpiar caracteres de control y caracteres raros
+    normalized = normalized.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+    
+    // Normalizar espacios múltiples a uno solo
+    normalized = normalized.replace(/\s+/g, ' ');
+    
+    // Capitalizar correctamente (primera letra de cada palabra)
+    normalized = normalized.toLowerCase().replace(/\b\w/g, letter => letter.toUpperCase());
+    
+    // Trim final
+    normalized = normalized.trim();
+    
+    return normalized;
+  }
+
   // Función mejorada para detectar navegadores
   async getChromiumPath() {
     const navegadores = [];
@@ -331,7 +363,7 @@ Una vez instalado, reinicia la aplicación.
 
     // Event listeners con mejor manejo de errores
     this.client.on('qr', (qr) => {
-      this.emit('qr-code', qr);
+      this.emit('qr', qr);
       this.emit('log', {
         type: 'info',
         message: 'Código QR generado. Escanea con WhatsApp.',
@@ -602,12 +634,16 @@ Una vez instalado, reinicia la aplicación.
     }
   }
   
+  // *** FUNCIÓN MODIFICADA: marcarDuplicados con soporte para columna Estado ***
   async marcarDuplicados(config, hojaEmails, hojaPrioridad) {
     const headers = Object.keys(config.data[0] || {});
-    const validacionIndex = headers.findIndex(h => h === 'Validación WA');
+    const validacionIndex = headers.findIndex(h => h === (config.columnas?.validacion || 'Validación WA'));
+    const estadoIndex = headers.findIndex(h => h === (config.columnas?.estado || 'Estado')); // NUEVA LÍNEA
+    
     if (validacionIndex === -1) return;
     
     const valCol = this.indexToColumnLetter(validacionIndex);
+    const estadoCol = estadoIndex !== -1 ? this.indexToColumnLetter(estadoIndex) : null; // NUEVA LÍNEA
     let duplicatesCount = 0;
     
     for (const row of config.data) {
@@ -615,7 +651,7 @@ Una vez instalado, reinicia la aplicación.
       
       const rowNumber = row.__rowIndex;
       const email = row['Email']?.trim().toLowerCase();
-      const estado = row['Validación WA']?.trim().toLowerCase();
+      const estado = row[config.columnas?.validacion || 'Validación WA']?.trim().toLowerCase();
       
       if (!email || estado) continue;
       
@@ -647,7 +683,15 @@ Una vez instalado, reinicia la aplicación.
           });
           
           fs.appendFileSync(this.DUPLICADOS_LOG_PATH, logMsg + '\n');
+          
+          // Actualizar columna de validación
           await this.updateSheet(config.spreadsheetId, `${config.sheetName}!${valCol}${rowNumber}`, 'duplicado');
+          
+          // *** NUEVO: Actualizar columna de estado si existe ***
+          if (estadoCol) {
+            await this.updateSheet(config.spreadsheetId, `${config.sheetName}!${estadoCol}${rowNumber}`, 'Inválido');
+          }
+          
           await this.sleep(1500);
         }
       }
@@ -658,14 +702,21 @@ Una vez instalado, reinicia la aplicación.
     }
   }
   
+  /**
+   * *** FUNCIÓN COMPLETAMENTE REEMPLAZADA: validarNumerosWhatsApp con normalización de nombres integrada ***
+   */
   async validarNumerosWhatsApp(config) {
     const columnas = config.columnas || {};
     const whatsappColName = columnas.whatsapp;
     const validacionColName = columnas.validacion;
+    const estadoColName = columnas.estado;
+    const nombreColName = columnas.nombre; // *** NUEVA LÍNEA ***
     
     const headers = Object.keys(config.data[0] || {});
     const whatsappIndex = headers.findIndex(h => h === whatsappColName);
     const validacionIndex = headers.findIndex(h => h === validacionColName);
+    const estadoIndex = headers.findIndex(h => h === estadoColName);
+    const nombreIndex = headers.findIndex(h => h === nombreColName); // *** NUEVA LÍNEA ***
     
     if ([whatsappIndex, validacionIndex].includes(-1)) {
       this.emit('log', {
@@ -677,15 +728,23 @@ Una vez instalado, reinicia la aplicación.
     }
     
     const valCol = this.indexToColumnLetter(validacionIndex);
+    const estadoCol = estadoIndex !== -1 ? this.indexToColumnLetter(estadoIndex) : null;
+    const nombreCol = nombreIndex !== -1 ? this.indexToColumnLetter(nombreIndex) : null; // *** NUEVA LÍNEA ***
     
     const pendientes = config.data.filter(row => {
       const estado = row[validacionColName]?.trim().toLowerCase();
       return !['si', 'sí', 'no', 'duplicado', 'enviado'].includes(estado);
     });
     
+    // *** MODIFICAR LOG para incluir info sobre normalización ***
+    let logMessage = `Validando ${pendientes.length} números en hoja: ${config.sheetName}`;
+    if (nombreCol) {
+      logMessage += ` (incluye normalización de nombres)`;
+    }
+    
     this.emit('log', {
       type: 'info',
-      message: `Validando ${pendientes.length} números en hoja: ${config.sheetName}`,
+      message: logMessage,
       timestamp: new Date().toISOString()
     });
     
@@ -699,6 +758,16 @@ Una vez instalado, reinicia la aplicación.
         
         const rowNumber = row.__rowIndex;
         const number = this.normalizarNumero(row[whatsappColName]);
+        
+        // *** NUEVA LÓGICA: Normalizar nombre si la columna existe ***
+        let needsNameUpdate = false;
+        let normalizedName = null;
+        
+        if (nombreCol && row[nombreColName]) {
+          const originalName = row[nombreColName];
+          normalizedName = this.normalizeLeadName(originalName);
+          needsNameUpdate = (originalName !== normalizedName);
+        }
         
         // Emitir progreso del número actual
         this.emit('progress', {
@@ -718,11 +787,50 @@ Una vez instalado, reinicia la aplicación.
               message: `Fila ${rowNumber} ya procesada (${estadoActual})`,
               timestamp: new Date().toISOString()
             });
+            
+            // *** NUEVA LÓGICA: Aún normalizar el nombre si es necesario ***
+            if (needsNameUpdate) {
+              try {
+                await this.updateSheet(config.spreadsheetId, `${config.sheetName}!${nombreCol}${rowNumber}`, normalizedName);
+                this.emit('log', {
+                  type: 'success', 
+                  message: `Nombre normalizado en fila ${rowNumber}: "${row[nombreColName]}" → "${normalizedName}"`,
+                  timestamp: new Date().toISOString()
+                });
+              } catch (nameError) {
+                this.emit('log', {
+                  type: 'warning',
+                  message: `Error normalizando nombre en fila ${rowNumber}: ${nameError.message}`,
+                  timestamp: new Date().toISOString()
+                });
+              }
+              // Pequeño delay adicional después de actualizar nombre
+              await this.sleep(500);
+            }
+            
             continue;
           }
           
+          // Manejo de números inválidos
           if (!number) {
+            // Actualizar columna de validación
             await this.updateSheet(config.spreadsheetId, `${config.sheetName}!${valCol}${rowNumber}`, 'no');
+            
+            // Actualizar columna de estado si existe
+            if (estadoCol) {
+              await this.updateSheet(config.spreadsheetId, `${config.sheetName}!${estadoCol}${rowNumber}`, 'Inválido');
+            }
+            
+            // *** NUEVA LÓGICA: Normalizar nombre incluso si el número es inválido ***
+            if (needsNameUpdate) {
+              await this.updateSheet(config.spreadsheetId, `${config.sheetName}!${nombreCol}${rowNumber}`, normalizedName);
+              this.emit('log', {
+                type: 'success',
+                message: `Nombre normalizado en fila ${rowNumber}: "${row[nombreColName]}" → "${normalizedName}"`,
+                timestamp: new Date().toISOString()
+              });
+            }
+            
             this.validationData.invalid++;
             this.validationData.completed++;
             
@@ -732,11 +840,28 @@ Una vez instalado, reinicia la aplicación.
               timestamp: new Date().toISOString()
             });
           } else {
+            // Validar número de WhatsApp
             const whatsappId = `${number}@c.us`;
             const exists = await this.client.isRegisteredUser(whatsappId);
             const status = exists ? 'si' : 'no';
             
+            // Actualizar columna de validación
             await this.updateSheet(config.spreadsheetId, `${config.sheetName}!${valCol}${rowNumber}`, status);
+            
+            // Actualizar columna de estado para números "no"
+            if (!exists && estadoCol) {
+              await this.updateSheet(config.spreadsheetId, `${config.sheetName}!${estadoCol}${rowNumber}`, 'Inválido');
+            }
+            
+            // *** NUEVA LÓGICA: Normalizar nombre junto con la validación ***
+            if (needsNameUpdate) {
+              await this.updateSheet(config.spreadsheetId, `${config.sheetName}!${nombreCol}${rowNumber}`, normalizedName);
+              this.emit('log', {
+                type: 'success',
+                message: `Nombre normalizado en fila ${rowNumber}: "${row[nombreColName]}" → "${normalizedName}"`,
+                timestamp: new Date().toISOString()
+              });
+            }
             
             if (exists) {
               this.validationData.valid++;
@@ -745,18 +870,24 @@ Una vez instalado, reinicia la aplicación.
             }
             this.validationData.completed++;
             
+            // *** MODIFICAR LOG para incluir info de normalización si aplica ***
+            let logMsg = `${number}: ${exists ? 'Válido' : 'No registrado'}`;
+            if (needsNameUpdate) {
+              logMsg += ` | Nombre normalizado`;
+            }
+            
             this.emit('log', {
               type: exists ? 'success' : 'info',
-              message: `${number}: ${exists ? 'Válido' : 'No registrado'}`,
+              message: logMsg,
               timestamp: new Date().toISOString()
             });
           }
           
           this.emit('progress', { ...this.validationData });
-          await this.sleep(1500);
+          await this.sleep(1500); // Delay estándar
           
         } catch (error) {
-          this.validationData.errors++;
+          this.validationData.errors = (this.validationData.errors || 0) + 1;
           this.emit('log', {
             type: 'error',
             message: `Error validando ${number}: ${error.message}`,
@@ -817,12 +948,34 @@ Una vez instalado, reinicia la aplicación.
     return auth.getClient();
   }
   
+  // *** FUNCIÓN MODIFICADA: normalizarNumero con validación de longitud ***
   normalizarNumero(number) {
-    if (!number) return '';
+    // Si no hay número o es vacío, retornar cadena vacía
+    if (!number || typeof number !== 'string') return '';
+    
+    // Limpiar el número (solo dígitos)
     let normalized = number.replace(/\D/g, '');
+    
+    // Si el número limpio está vacío, retornar vacío
+    if (!normalized) return '';
+    
+    // *** NUEVA VALIDACIÓN: Verificar longitud mínima ***
+    // Si tiene menos de 8 dígitos (muy corto para ser un número válido), retornar vacío
+    if (normalized.length < 8) {
+      return '';
+    }
+    
+    // Si ya empieza con 54 (código de Argentina), retornarlo
     if (normalized.startsWith('54')) return normalized;
+    
+    // Si tiene exactamente 10 dígitos, agregar 54
     if (normalized.length === 10) return '54' + normalized;
-    return normalized;
+    
+    // Si tiene exactamente 13 dígitos y empieza con 54, está bien
+    if (normalized.length === 13 && normalized.startsWith('54')) return normalized;
+    
+    // *** NUEVA VALIDACIÓN: Para cualquier otro caso que no sea válido, retornar vacío ***
+    return '';
   }
   
   indexToColumnLetter(index) {

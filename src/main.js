@@ -53,6 +53,71 @@ function resetCredentialsCheck() {
   console.log('Verificación de credenciales reseteada');
 }
 
+/**
+ * Valida los datos de una configuración antes de guardarla
+ */
+function validateConfigData(configData) {
+  try {
+    // Verificar estructura básica
+    if (!configData || typeof configData !== 'object') {
+      return { isValid: false, error: 'Datos de configuración inválidos' };
+    }
+    
+    // Verificar nombre
+    if (!configData.nombre || typeof configData.nombre !== 'string' || configData.nombre.trim() === '') {
+      return { isValid: false, error: 'El nombre de la configuración es requerido' };
+    }
+    
+    // Verificar principales
+    if (!configData.principales || !Array.isArray(configData.principales) || configData.principales.length === 0) {
+      return { isValid: false, error: 'Debe haber al menos una hoja de cálculo configurada' };
+    }
+    
+    // Validar cada hoja
+    for (let i = 0; i < configData.principales.length; i++) {
+      const sheet = configData.principales[i];
+      
+      // Verificar spreadsheetId
+      if (!sheet.spreadsheetId || typeof sheet.spreadsheetId !== 'string' || sheet.spreadsheetId.trim() === '') {
+        return { isValid: false, error: `Hoja ${i + 1}: ID de Google Sheets es requerido` };
+      }
+      
+      // Verificar formato básico del spreadsheetId (debe tener al menos 20 caracteres)
+      if (sheet.spreadsheetId.length < 20) {
+        return { isValid: false, error: `Hoja ${i + 1}: ID de Google Sheets parece inválido (muy corto)` };
+      }
+      
+      // Verificar sheetName
+      if (!sheet.sheetName || typeof sheet.sheetName !== 'string' || sheet.sheetName.trim() === '') {
+        return { isValid: false, error: `Hoja ${i + 1}: Nombre de la hoja es requerido` };
+      }
+      
+      // Verificar range (opcional, pero si existe debe ser string)
+      if (sheet.range && (typeof sheet.range !== 'string' || sheet.range.trim() === '')) {
+        return { isValid: false, error: `Hoja ${i + 1}: Rango inválido` };
+      }
+      
+      // Verificar columnas
+      if (!sheet.columnas || typeof sheet.columnas !== 'object') {
+        return { isValid: false, error: `Hoja ${i + 1}: Configuración de columnas inválida` };
+      }
+      
+      if (!sheet.columnas.whatsapp || typeof sheet.columnas.whatsapp !== 'string' || sheet.columnas.whatsapp.trim() === '') {
+        return { isValid: false, error: `Hoja ${i + 1}: Columna de WhatsApp es requerida` };
+      }
+      
+      if (!sheet.columnas.validacion || typeof sheet.columnas.validacion !== 'string' || sheet.columnas.validacion.trim() === '') {
+        return { isValid: false, error: `Hoja ${i + 1}: Columna de validación es requerida` };
+      }
+    }
+    
+    return { isValid: true };
+    
+  } catch (error) {
+    return { isValid: false, error: `Error validando configuración: ${error.message}` };
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -69,60 +134,47 @@ function createWindow() {
     show: false
   });
 
-  // Cargar la interfaz
-  mainWindow.loadFile(path.join(__dirname, 'renderer/index.html'));
+  // Cargar la aplicación
+  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
-  // Mostrar cuando esté listo
+  // Mostrar ventana cuando esté lista
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
     
-    // Abrir DevTools en desarrollo
-    if (isDev) {
-      mainWindow.webContents.openDevTools();
-    }
-    
-    // Verificar credenciales al mostrar la ventana
-    setTimeout(() => {
-      checkCredentials();
-    }, 1000);
-  });
-
-  // Manejar cierre de ventana
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-    if (validadorInstance) {
-      validadorInstance.cleanup();
+    // Verificar credenciales al cargar
+    if (!checkCredentialsOnce()) {
+      mainWindow.webContents.send('credentials-missing', {
+        path: userDataPath,
+        message: `No se encontró credenciales.json. Por favor, coloca el archivo en:\n${userDataPath}`
+      });
     }
   });
-}
 
-// Verificar si las credenciales existen
-function checkCredentials() {
-  if (!checkCredentialsOnce()) {
-    mainWindow.webContents.send('credentials-missing', {
-      path: userDataPath,
-      message: `No se encontró el archivo credenciales.json.\n\nPor favor, colócalo en:\n${userDataPath}`
-    });
+  // DevTools en desarrollo
+  if (isDev) {
+    mainWindow.webContents.openDevTools();
   }
+
+  return mainWindow;
 }
 
-// Función para abrir la carpeta de datos del usuario
 function openUserDataFolder() {
   shell.openPath(userDataPath);
 }
 
-// Crear menú nativo
 function createMenu() {
   const isMac = process.platform === 'darwin';
   
   const template = [
-    // App menu (solo en macOS)
+    // macOS app menu
     ...(isMac ? [{
-      label: 'Validador WhatsApp',
+      label: app.getName(),
       submenu: [
-        { label: 'Acerca de Validador WhatsApp', role: 'about' },
+        { label: 'Acerca de ' + app.getName(), role: 'about' },
         { type: 'separator' },
-        { label: 'Ocultar Validador WhatsApp', accelerator: 'Command+H', role: 'hide' },
+        { label: 'Servicios', role: 'services' },
+        { type: 'separator' },
+        { label: 'Ocultar ' + app.getName(), accelerator: 'Command+H', role: 'hide' },
         { label: 'Ocultar Otros', accelerator: 'Command+Shift+H', role: 'hideothers' },
         { label: 'Mostrar Todo', role: 'unhide' },
         { type: 'separator' },
@@ -134,76 +186,34 @@ function createMenu() {
     {
       label: 'Archivo',
       submenu: [
-        {
-          label: 'Abrir Configuración...',
+        { 
+          label: 'Abrir Configuración...', 
           accelerator: isMac ? 'Command+O' : 'Ctrl+O',
-          click: () => {
-            abrirConfiguracion();
-          }
+          click: abrirConfiguracion
         },
         { type: 'separator' },
-        {
-          label: 'Abrir Carpeta de Datos',
-          click: () => {
-            openUserDataFolder();
-          }
-        },
-        {
-          label: 'Instrucciones de Instalación',
-          click: () => {
-            dialog.showMessageBox(mainWindow, {
-              type: 'info',
-              title: 'Configuración de credenciales',
-              message: 'Instalación de credenciales.json',
-              detail: `Para que la aplicación funcione correctamente:\n\n1. Coloca el archivo 'credenciales.json' en:\n${userDataPath}\n\n2. Usa "Abrir Carpeta de Datos" en el menú Archivo para acceder fácilmente a esta ubicación.\n\n3. La carpeta 'configs' también debe estar en la misma ubicación para guardar tus configuraciones.`,
-              buttons: ['Entendido', 'Abrir Carpeta']
-            }).then(result => {
-              if (result.response === 1) {
-                openUserDataFolder();
-              }
-            });
-          }
+        { 
+          label: 'Abrir Carpeta de Datos', 
+          accelerator: isMac ? 'Command+Shift+O' : 'Ctrl+Shift+O',
+          click: openUserDataFolder 
         },
         { type: 'separator' },
-        {
-          label: 'Recargar Configuraciones',
-          accelerator: isMac ? 'Command+R' : 'Ctrl+R',
-          click: () => {
-            mainWindow.webContents.send('reload-configs');
-          }
-        },
-        ...(isMac ? [] : [
-          { type: 'separator' },
-          { label: 'Salir', accelerator: 'Ctrl+Q', role: 'quit' }
-        ])
+        isMac ? { label: 'Cerrar Ventana', accelerator: 'Command+W', role: 'close' }
+              : { label: 'Salir', accelerator: 'Ctrl+Q', role: 'quit' }
       ]
     },
     
-    // Validation menu
+    // Edit menu
     {
-      label: 'Validación',
+      label: 'Editar',
       submenu: [
-        {
-          label: 'Iniciar Validación',
-          accelerator: isMac ? 'Command+Return' : 'Ctrl+Enter',
-          click: () => {
-            mainWindow.webContents.send('start-validation');
-          }
-        },
-        {
-          label: 'Pausar Validación',
-          accelerator: isMac ? 'Command+P' : 'Ctrl+P',
-          click: () => {
-            mainWindow.webContents.send('pause-validation');
-          }
-        },
-        {
-          label: 'Detener Validación',
-          accelerator: isMac ? 'Command+.' : 'Ctrl+.',
-          click: () => {
-            mainWindow.webContents.send('stop-validation');
-          }
-        }
+        { label: 'Deshacer', accelerator: isMac ? 'Command+Z' : 'Ctrl+Z', role: 'undo' },
+        { label: 'Rehacer', accelerator: isMac ? 'Command+Shift+Z' : 'Ctrl+Y', role: 'redo' },
+        { type: 'separator' },
+        { label: 'Cortar', accelerator: isMac ? 'Command+X' : 'Ctrl+X', role: 'cut' },
+        { label: 'Copiar', accelerator: isMac ? 'Command+C' : 'Ctrl+C', role: 'copy' },
+        { label: 'Pegar', accelerator: isMac ? 'Command+V' : 'Ctrl+V', role: 'paste' },
+        { label: 'Seleccionar Todo', accelerator: isMac ? 'Command+A' : 'Ctrl+A', role: 'selectall' }
       ]
     },
     
@@ -213,9 +223,9 @@ function createMenu() {
       submenu: [
         { label: 'Recargar', accelerator: isMac ? 'Command+R' : 'Ctrl+R', role: 'reload' },
         { label: 'Forzar Recarga', accelerator: isMac ? 'Command+Shift+R' : 'Ctrl+Shift+R', role: 'forceReload' },
-        { label: 'Herramientas de Desarrollador', accelerator: 'F12', role: 'toggleDevTools' },
+        { label: 'Herramientas de Desarrollador', accelerator: isMac ? 'F12' : 'F12', role: 'toggleDevTools' },
         { type: 'separator' },
-        { label: 'Zoom Real', accelerator: isMac ? 'Command+0' : 'Ctrl+0', role: 'resetZoom' },
+        { label: 'Tamaño Real', accelerator: isMac ? 'Command+0' : 'Ctrl+0', role: 'resetZoom' },
         { label: 'Aumentar Zoom', accelerator: isMac ? 'Command+Plus' : 'Ctrl+Plus', role: 'zoomIn' },
         { label: 'Reducir Zoom', accelerator: isMac ? 'Command+-' : 'Ctrl+-', role: 'zoomOut' },
         { type: 'separator' },
@@ -322,6 +332,52 @@ ipcMain.handle('open-data-folder', async () => {
   return { success: true };
 });
 
+/**
+ * Handler para guardar una nueva configuración
+ */
+ipcMain.handle('save-new-config', async (event, fileName, configData) => {
+  try {
+    ensureUserDataFolders();
+    const configFilePath = path.join(CONFIGS_DIR, fileName);
+    
+    // Verificar que el archivo no exista ya
+    if (fs.existsSync(configFilePath)) {
+      return {
+        success: false,
+        error: `Ya existe una configuración con el nombre ${fileName}. Elige un nombre diferente.`
+      };
+    }
+    
+    // Validar datos de configuración
+    const validation = validateConfigData(configData);
+    if (!validation.isValid) {
+      return {
+        success: false,
+        error: `Configuración inválida: ${validation.error}`
+      };
+    }
+    
+    // Guardar archivo JSON con formato bonito
+    fs.writeFileSync(configFilePath, JSON.stringify(configData, null, 2), 'utf8');
+    
+    // Log del éxito
+    console.log(`Nueva configuración guardada: ${configFilePath}`);
+    
+    return {
+      success: true,
+      filePath: configFilePath,
+      fileName: fileName
+    };
+    
+  } catch (error) {
+    console.error('Error guardando configuración:', error);
+    return {
+      success: false,
+      error: error.message || 'Error desconocido al guardar la configuración'
+    };
+  }
+});
+
 ipcMain.handle('start-validation', async (event, configPath) => {
   try {
     // Verificar credenciales nuevamente antes de iniciar
@@ -337,16 +393,11 @@ ipcMain.handle('start-validation', async (event, configPath) => {
       };
     }
 
-    // Cleanup anterior si existe
-    if (validadorInstance) {
-      await validadorInstance.cleanup();
-    }
-
-    // Crear nueva instancia pasando userDataPath
+    // Crear nueva instancia del validador
     validadorInstance = new ValidadorCore(configPath, baseDir, userDataPath);
-    
-    // Configurar listeners para eventos
-    validadorInstance.on('qr-code', (qr) => {
+
+    // Event listeners del validador
+    validadorInstance.on('qr', (qr) => {
       mainWindow.webContents.send('qr-code', qr);
     });
 
@@ -359,13 +410,13 @@ ipcMain.handle('start-validation', async (event, configPath) => {
     });
 
     validadorInstance.on('progress', (data) => {
-      mainWindow.webContents.send('validation-progress', data);
-      
-      // Actualizar badge del dock con el progreso (solo macOS)
-      if (process.platform === 'darwin' && app.dock) {
+      // Actualizar badge del dock en macOS
+      if (process.platform === 'darwin' && app.dock && data.completed && data.total) {
         const percentage = Math.round((data.completed / data.total) * 100);
-        app.dock.setBadge(percentage.toString() + '%');
+        app.dock.setBadge(percentage > 0 ? `${percentage}%` : '');
       }
+      
+      mainWindow.webContents.send('validation-progress', data);
     });
 
     validadorInstance.on('log', (logData) => {
@@ -373,12 +424,11 @@ ipcMain.handle('start-validation', async (event, configPath) => {
     });
 
     validadorInstance.on('error', (error) => {
-      // Si es un error de credenciales, enviar información especial
       if (error.message === 'CREDENTIALS_NOT_FOUND') {
         mainWindow.webContents.send('validation-error', {
-          message: error.details.message,
           code: 'CREDENTIALS_NOT_FOUND',
-          path: error.details.path
+          message: error.details?.message || 'Credenciales no encontradas',
+          path: error.details?.path || userDataPath
         });
       } else {
         mainWindow.webContents.send('validation-error', error);
@@ -388,17 +438,17 @@ ipcMain.handle('start-validation', async (event, configPath) => {
     validadorInstance.on('completed', (results) => {
       mainWindow.webContents.send('validation-completed', results);
       
-      // Limpiar badge del dock (solo macOS)
+      // Limpiar badge del dock
       if (process.platform === 'darwin' && app.dock) {
         app.dock.setBadge('');
       }
-
-      // Mostrar notificación nativa
+      
+      // Mostrar notificación del sistema
       try {
         if (Notification.isSupported()) {
           const notification = new Notification({
             title: 'Validación Completada',
-            body: `Se validaron ${results.total} números. ${results.valid} válidos, ${results.invalid} inválidos.`,
+            body: `Proceso finalizado. ${results.valid} válidos, ${results.invalid} inválidos.`,
             icon: path.join(__dirname, '../assets/icon.png'),
             silent: false
           });
