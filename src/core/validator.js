@@ -62,30 +62,27 @@ class ValidadorCore extends EventEmitter {
    */
   normalizeLeadName(name) {
     if (!name || typeof name !== 'string') {
-      return name; // Retornar el valor original si no es válido
+      return name;
     }
-    
+
     // Convertir a string y trim espacios
     let normalized = name.toString().trim();
-    
+
     // Eliminar comillas simples y dobles
     normalized = normalized.replace(/['"]/g, '');
-    
-    // Eliminar caracteres especiales problemáticos para integraciones (especialmente Make)
-    normalized = normalized.replace(/[`´''""„"«»]/g, '');
-    
-    // Limpiar caracteres de control y caracteres raros
+
+    // Eliminar otros caracteres especiales problemáticos
+    normalized = normalized.replace(/[`´""„«»]/g, '');
+
+    // Eliminar caracteres de control ASCII (no imprimibles)
     normalized = normalized.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
-    
+
     // Normalizar espacios múltiples a uno solo
     normalized = normalized.replace(/\s+/g, ' ');
-    
-    // Capitalizar correctamente (primera letra de cada palabra)
-    normalized = normalized.toLowerCase().replace(/\b\w/g, letter => letter.toUpperCase());
-    
+
     // Trim final
     normalized = normalized.trim();
-    
+
     return normalized;
   }
 
