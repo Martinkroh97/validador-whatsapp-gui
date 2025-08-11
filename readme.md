@@ -143,7 +143,7 @@ Tu hoja de cálculo debe tener estas columnas (nombres configurables):
 | **Validación WA** | Resultado de validación | ✅ |
 | **Estado** | Estado del lead | ❌ |
 | **Nombre** | Nombre del lead | ❌ |
-| **Email** | Email (para detección de duplicados) | ❌ |
+| **WhatsApp** | WhastApp (para detección de duplicados) | ❌ |
 
 ### **Archivo de Configuración**
 Crea archivos JSON en la carpeta `configs/`:
@@ -185,7 +185,7 @@ Crea archivos JSON en la carpeta `configs/`:
 - Conexión con WhatsApp Web via puppeteer
 - Validación masiva de números
 - Normalización automática de nombres
-- Detección de duplicados
+- Detección de números duplicados
 - Actualización de Google Sheets
 ```
 
@@ -393,22 +393,6 @@ Descripción más detallada si es necesario
 ```
 
 Tipos: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
-
-## 🗺 Roadmap
-
-### **Próximas Funcionalidades**
-- [ ] **v2.2.0**: Soporte para Telegram
-- [ ] **v2.3.0**: Base de datos local (SQLite)
-- [ ] **v3.0.0**: Modo servidor/API REST
-- [ ] **v3.1.0**: Dashboard web
-- [ ] **v3.2.0**: Integración con CRM
-
-### **Mejoras Técnicas**
-- [ ] Tests automatizados
-- [ ] CI/CD con GitHub Actions  
-- [ ] Docker containerization
-- [ ] Documentación API
-- [ ] Plugin system
 
 ## 📄 Licencia
 
