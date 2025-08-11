@@ -45,7 +45,7 @@ class ValidadorCore extends EventEmitter {
     };
 
     this.hojasParsed = [];
-    this.hojaEmails = [];
+    this.hojaNumeros = []; // *** CAMBIO: de hojaEmails a hojaNumeros ***
 
     // *** IMPORTANTE: Declarar hojaPrioridad aquí ***
     this.hojaPrioridad = {};
@@ -451,6 +451,7 @@ Una vez instalado, reinicia la aplicación.
     }
   }
   
+  // *** FUNCIÓN MODIFICADA: startValidationProcess para procesar números en vez de emails ***
   async startValidationProcess() {
     try {
       this.emit('log', {
@@ -471,15 +472,22 @@ Una vez instalado, reinicia la aplicación.
         const data = await this.escanearHoja(hoja);
         this.hojasParsed.push({ ...hoja, data });
 
-        // Procesar emails para detección de duplicados
+        // *** MODIFICADO: Procesar números de WhatsApp para detección de duplicados ***
+        const columnas = hoja.columnas || {};
+        const whatsappColName = columnas.whatsapp;
+        
         for (const row of data) {
-          const email = row['Email']?.trim().toLowerCase();
+          const numeroRaw = row[whatsappColName]?.toString().trim();
+          const numeroNormalizado = this.normalizarNumero(numeroRaw);
           const fecha = row['Fecha'] ? new Date(row['Fecha']) : null;
-          if (!email) continue;
-          this.hojaEmails.push({
+          
+          // Solo procesar si el número es válido
+          if (!numeroNormalizado) continue;
+          
+          this.hojaNumeros.push({
             spreadsheetId: hoja.spreadsheetId,
             sheetName: hoja.sheetName,
-            email,
+            numero: numeroNormalizado, // *** CAMBIO: numero en vez de email ***
             rowIndex: row.__rowIndex,
             fecha,
           });
@@ -495,13 +503,13 @@ Una vez instalado, reinicia la aplicación.
       // Fase 2: Marcar duplicados
       this.emit('log', {
         type: 'info',
-        message: 'Fase 2: Detectando y marcando duplicados...',
+        message: 'Fase 2: Detectando y marcando duplicados por número de WhatsApp...',
         timestamp: new Date().toISOString()
       });
 
       for (const hoja of this.hojasParsed) {
         if (!this.isRunning || this.isPaused) return;
-        await this.marcarDuplicados(hoja, this.hojaEmails, this.hojaPrioridad);
+        await this.marcarDuplicados(hoja, this.hojaNumeros, this.hojaPrioridad); // *** CAMBIO: hojaNumeros ***
       }
 
       // Fase 3: Validar números de WhatsApp
@@ -630,40 +638,59 @@ Una vez instalado, reinicia la aplicación.
     }
   }
   
-  // *** FUNCIÓN MODIFICADA: marcarDuplicados con soporte para columna Estado ***
-  async marcarDuplicados(config, hojaEmails, hojaPrioridad) {
+  // *** FUNCIÓN COMPLETAMENTE REESCRITA: marcarDuplicados por número de WhatsApp ***
+  async marcarDuplicados(config, hojaNumeros, hojaPrioridad) {
     const headers = Object.keys(config.data[0] || {});
     const validacionIndex = headers.findIndex(h => h === (config.columnas?.validacion || 'Validación WA'));
-    const estadoIndex = headers.findIndex(h => h === (config.columnas?.estado || 'Estado')); // NUEVA LÍNEA
+    const estadoIndex = headers.findIndex(h => h === (config.columnas?.estado || 'Estado'));
+    const whatsappIndex = headers.findIndex(h => h === (config.columnas?.whatsapp || 'WhatsApp'));
     
-    if (validacionIndex === -1) return;
+    if (validacionIndex === -1 || whatsappIndex === -1) {
+      this.emit('log', {
+        type: 'warning',
+        message: `Columnas faltantes en hoja: ${config.sheetName}`,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
     
     const valCol = this.indexToColumnLetter(validacionIndex);
-    const estadoCol = estadoIndex !== -1 ? this.indexToColumnLetter(estadoIndex) : null; // NUEVA LÍNEA
+    const estadoCol = estadoIndex !== -1 ? this.indexToColumnLetter(estadoIndex) : null;
+    const whatsappColName = config.columnas?.whatsapp || 'WhatsApp';
     let duplicatesCount = 0;
     
     for (const row of config.data) {
       if (!this.isRunning || this.isPaused) return;
       
       const rowNumber = row.__rowIndex;
-      const email = row['Email']?.trim().toLowerCase();
+      const numeroRaw = row[whatsappColName]?.toString().trim();
+      const numeroNormalizado = this.normalizarNumero(numeroRaw);
       const estado = row[config.columnas?.validacion || 'Validación WA']?.trim().toLowerCase();
       
-      if (!email || estado) continue;
+      // Saltar si no hay número válido o ya está procesado
+      if (!numeroNormalizado || estado) continue;
       
-      const ocurrencias = hojaEmails.filter(e => e.email === email);
+      // *** CAMBIO PRINCIPAL: Buscar ocurrencias por número normalizado ***
+      const ocurrencias = hojaNumeros.filter(n => n.numero === numeroNormalizado);
       
       if (ocurrencias.length > 1) {
+        // Ordenar ocurrencias por prioridad (fecha primero, luego hoja, luego fila)
         const ordenadas = ocurrencias.sort((a, b) => {
+          // 1. Priorizar por fecha (más antigua primero)
           if (a.fecha && b.fecha) return a.fecha - b.fecha;
-          if (b.fecha) return 1;
-          if (a.fecha) return -1;
+          if (b.fecha) return 1; // b tiene fecha, a no -> b es primero
+          if (a.fecha) return -1; // a tiene fecha, b no -> a es primero
+          
+          // 2. Priorizar por orden de hojas en configuración
           const pa = hojaPrioridad[a.spreadsheetId] ?? 999;
           const pb = hojaPrioridad[b.spreadsheetId] ?? 999;
           if (pa !== pb) return pa - pb;
+          
+          // 3. Por último, por número de fila
           return a.rowIndex - b.rowIndex;
         });
         
+        // Verificar si esta fila es la primera ocurrencia (la que se mantiene)
         const actualEsPrimero = ordenadas[0]?.spreadsheetId === config.spreadsheetId && 
                                 ordenadas[0].rowIndex === rowNumber;
         
@@ -671,7 +698,8 @@ Una vez instalado, reinicia la aplicación.
           duplicatesCount++;
           this.validationData.duplicates++;
           
-          const logMsg = `Duplicado: ${email} en ${config.sheetName} fila ${rowNumber}`;
+          // *** CAMBIO: Log mejorado mostrando el número duplicado ***
+          const logMsg = `Duplicado: ${numeroNormalizado} en ${config.sheetName} fila ${rowNumber}`;
           this.emit('log', {
             type: 'warning',
             message: logMsg,
@@ -683,7 +711,7 @@ Una vez instalado, reinicia la aplicación.
           // Actualizar columna de validación
           await this.updateSheet(config.spreadsheetId, `${config.sheetName}!${valCol}${rowNumber}`, 'duplicado');
           
-          // *** NUEVO: Actualizar columna de estado si existe ***
+          // Actualizar columna de estado si existe
           if (estadoCol) {
             await this.updateSheet(config.spreadsheetId, `${config.sheetName}!${estadoCol}${rowNumber}`, 'Inválido');
           }
@@ -694,6 +722,11 @@ Una vez instalado, reinicia la aplicación.
     }
     
     if (duplicatesCount > 0) {
+      this.emit('log', {
+        type: 'info', 
+        message: `${duplicatesCount} duplicados encontrados por número de WhatsApp en ${config.sheetName}`,
+        timestamp: new Date().toISOString()
+      });
       this.emit('progress', { ...this.validationData });
     }
   }
@@ -944,33 +977,56 @@ Una vez instalado, reinicia la aplicación.
     return auth.getClient();
   }
   
-  // *** FUNCIÓN MODIFICADA: normalizarNumero con validación de longitud ***
+  // *** FUNCIÓN MEJORADA: normalizarNumero con validación más estricta ***
   normalizarNumero(number) {
     // Si no hay número o es vacío, retornar cadena vacía
-    if (!number || typeof number !== 'string') return '';
+    if (!number || typeof number !== 'string') {
+      // Convertir a string si es número
+      if (typeof number === 'number') {
+        number = number.toString();
+      } else {
+        return '';
+      }
+    }
     
     // Limpiar el número (solo dígitos)
-    let normalized = number.replace(/\D/g, '');
+    let normalized = number.toString().replace(/\D/g, '');
     
     // Si el número limpio está vacío, retornar vacío
     if (!normalized) return '';
     
-    // *** NUEVA VALIDACIÓN: Verificar longitud mínima ***
+    // *** VALIDACIÓN MEJORADA: Verificar longitud y formato ***
     // Si tiene menos de 8 dígitos (muy corto para ser un número válido), retornar vacío
-    if (normalized.length < 8) {
-      return '';
+    if (normalized.length < 8) return '';
+    
+    // Si ya empieza con 54 (código de Argentina), verificar longitud total
+    if (normalized.startsWith('54')) {
+      // Debe tener entre 12 y 15 dígitos para ser válido con código de país
+      if (normalized.length >= 12 && normalized.length <= 15) {
+        return normalized;
+      } else {
+        return ''; // Longitud incorrecta
+      }
     }
     
-    // Si ya empieza con 54 (código de Argentina), retornarlo
-    if (normalized.startsWith('54')) return normalized;
-    
     // Si tiene exactamente 10 dígitos, agregar 54
-    if (normalized.length === 10) return '54' + normalized;
+    if (normalized.length === 10) {
+      return '54' + normalized;
+    }
     
-    // Si tiene exactamente 13 dígitos y empieza con 54, está bien
-    if (normalized.length === 13 && normalized.startsWith('54')) return normalized;
+    // Si tiene 11 dígitos y empieza con 1, podría ser formato 1XXXXXXXXX, agregar 54
+    if (normalized.length === 11 && normalized.startsWith('1')) {
+      return '54' + normalized;
+    }
     
-    // *** NUEVA VALIDACIÓN: Para cualquier otro caso que no sea válido, retornar vacío ***
+    // *** NUEVA VALIDACIÓN: Para números de 8-9 dígitos, agregar 54 + código de área ***
+    if (normalized.length >= 8 && normalized.length <= 9) {
+      // Asumir que necesita código de área 11 (Buenos Aires) si es muy corto
+      const withAreaCode = '54' + '11' + normalized;
+      return withAreaCode;
+    }
+    
+    // Para cualquier otro caso que no sea válido, retornar vacío
     return '';
   }
   
