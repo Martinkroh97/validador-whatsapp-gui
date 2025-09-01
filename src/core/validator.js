@@ -16,7 +16,7 @@ class ValidadorCore extends EventEmitter {
     this.isRunning = false;
     this.isPaused = false;
 
-    // Mejorar detección de si estamos en producción
+    // Detección de si estamos en producción (dejamos tu heurística original)
     this.isPackaged = process.pkg !== undefined || // pkg
                      (process.env.NODE_ENV === 'production') || // electron-builder
                      (process.argv[0].includes('Electron') && !process.argv[0].includes('node_modules')) || // electron app
@@ -301,7 +301,7 @@ Una vez instalado, reinicia la aplicación.
       throw err;
     }
 
-    // Configurar argumentos de Puppeteer según el entorno
+    // Configurar argumentos de Puppeteer según el entorno (dejamos tu set original)
     let puppeteerArgs = [
       '--disable-dev-shm-usage',
       '--disable-web-security', 
@@ -348,9 +348,13 @@ Una vez instalado, reinicia la aplicación.
         clientId: 'validador-whatsapp'
       }),
       puppeteer: puppeteerConfig,
+
+      // *** ACTUALIZADO: no pin fijo, usar 'latest' y cache remoto con placeholder ***
+      webVersion: 'latest',
       webVersionCache: {
         type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}.html',
+        strict: false,
       }
     });
 
@@ -570,8 +574,9 @@ Una vez instalado, reinicia la aplicación.
   }
   
   async escanearHoja(config) {
-    const authClient = await this.getAuth();
-    const sheets = google.sheets({ version: 'v4', auth: authClient });
+    // FIX: usar let porque se reasignan en el retry
+    let authClient = await this.getAuth();
+    let sheets = google.sheets({ version: 'v4', auth: authClient });
     
     try {
       // *** Agregar retry para el error de visibility check ***
@@ -820,6 +825,7 @@ Una vez instalado, reinicia la aplicación.
             // *** NUEVA LÓGICA: Aún normalizar el nombre si es necesario ***
             if (needsNameUpdate) {
               try {
+                // FIX: template correcto con '!' entre sheetName y columna
                 await this.updateSheet(config.spreadsheetId, `${config.sheetName}!${nombreCol}${rowNumber}`, normalizedName);
                 this.emit('log', {
                   type: 'success', 
@@ -958,8 +964,8 @@ Una vez instalado, reinicia la aplicación.
         });
         return;
       } catch (error) {
-        const mensaje = error?.errors?.[0]?.reason || error.message;
-        if (mensaje === 'rateLimitExceeded' || mensaje === 'userRateLimitExceeded') {
+        const mensaje = error?.errors?.[0]?.reason || error.message || error?.code;
+        if (mensaje === 'rateLimitExceeded' || mensaje === 'userRateLimitExceeded' || mensaje === 429) {
           await this.sleep(3000);
         } else {
           throw error;
@@ -980,13 +986,8 @@ Una vez instalado, reinicia la aplicación.
   // *** FUNCIÓN MEJORADA: normalizarNumero con validación más estricta ***
   normalizarNumero(number) {
     // Si no hay número o es vacío, retornar cadena vacía
-    if (!number || typeof number !== 'string') {
-      // Convertir a string si es número
-      if (typeof number === 'number') {
-        number = number.toString();
-      } else {
-        return '';
-      }
+    if (!number || (typeof number !== 'string' && typeof number !== 'number')) {
+      return '';
     }
     
     // Limpiar el número (solo dígitos)
